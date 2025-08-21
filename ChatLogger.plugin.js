@@ -6,34 +6,28 @@
  * @source https://github.com/SalivionR/ChatLogger
  */
 
-const { Plugin } = require('powercord/entities'); // ← УДАЛИ ЭТУ СТРОКУ
-const { getModule, React } = require('powercord/webpack'); // ← УДАЛИ ЭТУ СТРОКУ
-const { inject, uninject } = require('powercord/injector'); // ← УДАЛИ ЭТУ СТРОКУ
-
-// Добавь эти импорты для BetterDiscord
-const { webpack: { getModule, getModules }, patcher, plugins: { getFolder } } = require('@betterdiscord/bdapi');
 const { join } = require('path');
 const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
 
-module.exports = class ChatLogger { // ← Убери "extends Plugin"
+module.exports = class ChatLogger {
   constructor() {
     this.logs = new Map();
     
     // Правильный путь для BetterDiscord
-    this.logDirectory = join(getFolder(), '..', 'PluginData', 'ChatLogger');
+    this.logDirectory = join(BdApi.Plugins.folder, '..', 'PluginData', 'ChatLogger');
     
     if (!existsSync(this.logDirectory)) {
       mkdirSync(this.logDirectory, { recursive: true });
     }
   }
 
-  async start() { // ← Переименуй startPlugin в start
-    const MessageActions = await getModule(['sendMessage', 'editMessage']);
-    const ChannelStore = await getModule(['getChannel']);
-    const UserStore = await getModule(['getCurrentUser', 'getUser']);
+  async start() {
+    // Используем BdApi вместо прямого импорта
+    const MessageActions = await BdApi.Webpack.getModule(['sendMessage', 'editMessage']);
+    const ChannelStore = await BdApi.Webpack.getModule(['getChannel']);
+    const UserStore = await BdApi.Webpack.getModule(['getCurrentUser', 'getUser']);
 
-    // Используй patcher вместо inject
-    patcher.instead('ChatLogger', MessageActions, 'sendMessage', (args, original) => {
+    BdApi.Patcher.instead('ChatLogger', MessageActions, 'sendMessage', (args, original) => {
       const [channelId, message] = args;
       const channel = ChannelStore.getChannel(channelId);
       
@@ -44,9 +38,9 @@ module.exports = class ChatLogger { // ← Убери "extends Plugin"
       return original(...args);
     });
 
-    const MessageDispatcher = await getModule(['dispatch']);
+    const MessageDispatcher = await BdApi.Webpack.getModule(['dispatch']);
     if (MessageDispatcher && MessageDispatcher.dispatch) {
-      patcher.instead('ChatLogger', MessageDispatcher, 'dispatch', (args, original) => {
+      BdApi.Patcher.instead('ChatLogger', MessageDispatcher, 'dispatch', (args, original) => {
         const [action] = args;
         
         if (action.type === 'MESSAGE_CREATE' && action.message) {
@@ -65,12 +59,11 @@ module.exports = class ChatLogger { // ← Убери "extends Plugin"
     this.log('Плагин ChatLogger запущен');
   }
 
-  stop() { // ← Переименуй pluginWillUnload в stop
+  stop() {
     this.saveAllLogs();
-    patcher.unpatchAll('ChatLogger'); // ← Используй unpatchAll вместо uninject
+    BdApi.Patcher.unpatchAll('ChatLogger');
   }
 
-  // Остальной код остается без изменений
   logMessage(channel, user, content) {
     const timestamp = new Date().toISOString();
     const logEntry = {
@@ -124,7 +117,6 @@ module.exports = class ChatLogger { // ← Убери "extends Plugin"
     }
   }
 
-  // Добавь метод log для BetterDiscord
   log(message) {
     console.log(`%c[ChatLogger]%c ${message}`, 'color: #3a71c1; font-weight: 700;', '');
   }
