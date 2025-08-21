@@ -1,37 +1,39 @@
 /**
  * @name ChatLogger
  * @version 1.0.0
- * @description Логирует сообщения чата в JSON файл
+ * @description Log chat in JSON file
  * @author Simuss
- * @source https://github.com/ваш-репозиторий
+ * @source https://github.com/SalivionR/ChatLogger
  */
 
-const { Plugin } = require('powercord/entities');
-const { getModule, React } = require('powercord/webpack');
-const { inject, uninject } = require('powercord/injector');
-const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
-const { join } = require('path');
+const { Plugin } = require('powercord/entities'); // ← УДАЛИ ЭТУ СТРОКУ
+const { getModule, React } = require('powercord/webpack'); // ← УДАЛИ ЭТУ СТРОКУ
+const { inject, uninject } = require('powercord/injector'); // ← УДАЛИ ЭТУ СТРОКУ
 
-module.exports = class ChatLogger extends Plugin {
+// Добавь эти импорты для BetterDiscord
+const { webpack: { getModule, getModules }, patcher, plugins: { getFolder } } = require('@betterdiscord/bdapi');
+const { join } = require('path');
+const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
+
+module.exports = class ChatLogger { // ← Убери "extends Plugin"
   constructor() {
-    super();
-    this.logs = new Map(); // Хранит логи для каждого канала
-    this.logDirectory = join(__dirname, 'chat_logs');
+    this.logs = new Map();
     
-    // Создаем директорию для логов, если её нет
+    // Правильный путь для BetterDiscord
+    this.logDirectory = join(getFolder(), '..', 'PluginData', 'ChatLogger');
+    
     if (!existsSync(this.logDirectory)) {
-      mkdirSync(this.logDirectory);
+      mkdirSync(this.logDirectory, { recursive: true });
     }
   }
 
-  async startPlugin() {
-    // Получаем необходимые модули Discord
+  async start() { // ← Переименуй startPlugin в start
     const MessageActions = await getModule(['sendMessage', 'editMessage']);
     const ChannelStore = await getModule(['getChannel']);
     const UserStore = await getModule(['getCurrentUser', 'getUser']);
 
-    // Перехватываем отправку сообщений
-    inject('chat-logger-send', MessageActions, 'sendMessage', (args, res) => {
+    // Используй patcher вместо inject
+    patcher.instead('ChatLogger', MessageActions, 'sendMessage', (args, original) => {
       const [channelId, message] = args;
       const channel = ChannelStore.getChannel(channelId);
       
@@ -39,13 +41,12 @@ module.exports = class ChatLogger extends Plugin {
         this.logMessage(channel, UserStore.getCurrentUser(), message.content);
       }
       
-      return res;
+      return original(...args);
     });
 
-    // Перехватываем получение сообщений (если нужно логировать входящие тоже)
     const MessageDispatcher = await getModule(['dispatch']);
     if (MessageDispatcher && MessageDispatcher.dispatch) {
-      inject('chat-logger-receive', MessageDispatcher, 'dispatch', (args, res) => {
+      patcher.instead('ChatLogger', MessageDispatcher, 'dispatch', (args, original) => {
         const [action] = args;
         
         if (action.type === 'MESSAGE_CREATE' && action.message) {
@@ -57,20 +58,19 @@ module.exports = class ChatLogger extends Plugin {
           }
         }
         
-        return res;
+        return original(...args);
       });
     }
 
     this.log('Плагин ChatLogger запущен');
   }
 
-  pluginWillUnload() {
-    // Сохраняем все логи при выгрузке плагина
+  stop() { // ← Переименуй pluginWillUnload в stop
     this.saveAllLogs();
-    uninject('chat-logger-send');
-    uninject('chat-logger-receive');
+    patcher.unpatchAll('ChatLogger'); // ← Используй unpatchAll вместо uninject
   }
 
+  // Остальной код остается без изменений
   logMessage(channel, user, content) {
     const timestamp = new Date().toISOString();
     const logEntry = {
@@ -80,14 +80,12 @@ module.exports = class ChatLogger extends Plugin {
       channel: channel.name
     };
 
-    // Добавляем запись в лог канала
     if (!this.logs.has(channel.id)) {
       this.logs.set(channel.id, []);
     }
     
     this.logs.get(channel.id).push(logEntry);
     
-    // Сохраняем лог каждые 10 сообщений или сразу для важных сообщений
     if (this.logs.get(channel.id).length >= 10 || content.length > 100) {
       this.saveChannelLog(channel.id);
     }
@@ -102,20 +100,16 @@ module.exports = class ChatLogger extends Plugin {
     const logFileName = join(this.logDirectory, `channel_${channelId}.json`);
     
     try {
-      // Читаем существующие логи, если есть
       let existingLogs = [];
       if (existsSync(logFileName)) {
         const data = readFileSync(logFileName, 'utf8');
         existingLogs = JSON.parse(data);
       }
       
-      // Добавляем новые записи
       const updatedLogs = [...existingLogs, ...channelLogs];
       
-      // Сохраняем обновленные логи
       writeFileSync(logFileName, JSON.stringify(updatedLogs, null, 2));
       
-      // Очищаем временное хранилище для этого канала
       this.logs.set(channelId, []);
       
       this.log(`Логи для канала ${channelId} сохранены (${updatedLogs.length} записей)`);
@@ -128,5 +122,10 @@ module.exports = class ChatLogger extends Plugin {
     for (const [channelId] of this.logs) {
       this.saveChannelLog(channelId);
     }
+  }
+
+  // Добавь метод log для BetterDiscord
+  log(message) {
+    console.log(`%c[ChatLogger]%c ${message}`, 'color: #3a71c1; font-weight: 700;', '');
   }
 };
